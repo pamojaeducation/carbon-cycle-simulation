@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carbon cycle: run a decade</title>
+<style>
+:root{--ink:#12303B;--muted:#4A6370;--line:#C6D6D4;--wash:#EEF4F3;--focus:#1F6F9F}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;color:var(--ink);font-size:15px;line-height:1.45;background:#fff}
+#app{max-width:1000px;margin:0 auto;padding:12px}
+h1{font-family:Georgia,"Times New Roman",serif;font-size:1.4rem;margin:0 0 8px}
+.layout{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:760px){.layout{grid-template-columns:1fr}}
+.card{border:1px solid var(--line);border-radius:8px;padding:12px;background:#fff}
+.card+.card{margin-top:12px}
+.card h2{font-size:1.05rem;text-align:center;margin:0 0 8px;font-weight:600}
+.param{margin:12px 0 4px}
+.param .lab{font-size:.92rem}
+.prow{display:flex;align-items:center;gap:10px;margin-top:6px}
+.prow input[type=range]{flex:1;min-width:0}
+.prow .num{display:flex;align-items:center;gap:4px;white-space:nowrap}
+.prow input[type=number]{width:62px;font:inherit;padding:4px;text-align:right;border:1px solid var(--line);border-radius:4px}
+.ends{display:flex;justify-content:space-between;font-size:.8rem;color:var(--muted);margin-right:84px}
+button{font:inherit;cursor:pointer}
+.btn{border:1px solid var(--ink);background:#fff;color:var(--ink);border-radius:6px;padding:8px 14px}
+.btn.primary{background:var(--ink);color:#fff}
+.btn.small{padding:3px 8px;font-size:.85rem}
+.btn:disabled{opacity:.5;cursor:default}
+.btnrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.year{font-size:1.9rem;font-weight:700;font-family:Georgia,serif;margin-left:auto}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+svg{display:block;width:100%;max-width:570px;height:auto;margin:0 auto;border-radius:6px}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums}
+th:first-child,td:first-child{text-align:left}
+.tw{overflow-x:auto}
+details{margin-top:10px}summary{cursor:pointer;font-weight:600}
+.hint{font-size:.85rem;color:var(--muted);margin:8px 0 0}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</head>
+<body>
+<div id="app">
+<h1>Carbon cycle simulation</h1>
+<div class="layout">
+  <div>
+    <div class="card">
+      <h2>Adjust simulation parameters</h2>
+      <div class="param">
+        <div class="lab" id="l1">Change in fossil fuel use per year</div>
+        <div class="prow">
+          <input type="range" id="r1" min="-4" max="4" step="0.5" value="2" aria-labelledby="l1">
+          <span class="num"><input type="number" id="n1" min="-4" max="4" step="0.5" value="2" aria-label="Fossil fuel change, percent per year"> %</span>
+          <button class="btn small" id="z1" type="button">None</button>
+        </div>
+        <div class="ends"><span>-4%</span><span>+4%</span></div>
+      </div>
+      <div class="param">
+        <div class="lab" id="l2">Net deforestation rate per year</div>
+        <div class="prow">
+          <input type="range" id="r2" min="-4" max="4" step="0.5" value="1" aria-labelledby="l2">
+          <span class="num"><input type="number" id="n2" min="-4" max="4" step="0.5" value="1" aria-label="Net deforestation, gigatonnes of carbon per year"> GT</span>
+          <button class="btn small" id="z2" type="button">None</button>
+        </div>
+        <div class="ends"><span>-4 GT</span><span>+4 GT</span></div>
+      </div>
+      <p class="hint">A negative deforestation value means net forest growth (afforestation). You can change the settings at any time between decades.</p>
+    </div>
+    <div class="card">
+      <div class="btnrow">
+        <button class="btn primary" id="run" type="button">Run decade</button>
+        <button class="btn" id="reset" type="button">Reset</button>
+        <span class="year" id="year" aria-live="polite">2010</span>
+      </div>
+      <p class="hint">Each grey block is 25 GT of carbon. Gigatonnes (GT) of carbon are used for all storages.</p>
+      <details>
+        <summary>Data table</summary>
+        <div class="tw"><table id="tbl">
+          <thead><tr><th>Year</th><th>Atmos.</th><th>Ocean surface</th><th>Deep ocean</th><th>Oil and gas</th><th>Coal</th><th>Soil</th><th>Plants</th></tr></thead>
+          <tbody></tbody>
+        </table></div>
+      </details>
+    </div>
+  </div>
+  <div class="card">
+    <svg id="gfx" role="img" aria-label="Carbon storages"></svg>
+    <div class="sr-only" id="sr" aria-live="polite"></div>
+  </div>
+</div>
+</div>
+<script>
+(function(){
+'use strict';
+var $=function(i){return document.getElementById(i)};
+var K={kl:0.02,sat:600,k:0.075,s:2.5,kd:0.04,Opre:930,Apre:512,perPpm:1.84,maxYear:2210};
+var st,hist,prev,fchg=2,defor=1;
+
+function fresh(){
+  st={year:2010,A:720,P:700,S:1800,O:1000,D:38000,C:3500,OG:500,rc:4,ro:5};
+  hist=[snap()];prev=snap();
+}
+function snap(){return {year:st.year,A:st.A,O:st.O,D:st.D,OG:st.OG,C:st.C,S:st.S,P:st.P};}
+
+function oneYear(){
+  var fc=Math.min(st.rc,st.C),fo=Math.min(st.ro,st.OG);
+  var dr=Math.min(defor,st.P*0.05);
+  if(dr<0)dr=Math.max(dr,-Math.max(0,st.A-300)*0.1);
+  var ex=st.A-K.Apre;
+  var U=ex>0?K.kl*ex/(1+ex/K.sat):K.kl*ex;
+  var nao=K.k*(st.A-(K.Apre+K.s*(st.O-K.Opre)));
+  var fd=K.kd*(st.O-K.Opre);
+  st.A+=fc+fo+dr-U-nao;
+  st.P+=0.6*U-dr;
+  st.S+=0.4*U;
+  st.O+=nao-fd;
+  st.D+=fd;
+  st.C-=fc;st.OG-=fo;
+  st.rc*=1+fchg/100;st.ro*=1+fchg/100;
+  st.year+=1;
+}
+function runDecade(){
+  if(st.year>=K.maxYear)return;
+  prev=snap();
+  for(var i=0;i<10;i++)oneYear();
+  hist.push(snap());
+  render();
+}
+
+function r10(v){return Math.round(v/10)*10;}
+function fmt(v){return r10(v).toLocaleString('en-GB');}
+function chg(v,p){var d=r10(v)-r10(p);return (d>=0?'+':'')+d.toLocaleString('en-GB');}
+function rect(x,y,w,h,f,s){return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="'+f+'"'+(s?' stroke="'+s+'"':'')+'/>';}
+function blocks(n,per,x0,y0){
+  var o='';
+  for(var i=0;i<n;i++){
+    o+='<rect x="'+(x0+(i%per)*19)+'" y="'+(y0+Math.floor(i/per)*11)+'" width="16" height="8" rx="1" fill="#9a9a9a" stroke="#333" stroke-width="1"/>';
+  }
+  return o;
+}
+function label(x,y,name,val,pv,anchor){
+  return '<text x="'+x+'" y="'+y+'" fill="#fff" font-size="14" text-anchor="'+anchor+'">'+name+'</text>'+
+         '<text x="'+x+'" y="'+(y+18)+'" fill="#fff" font-size="14" font-weight="700" text-anchor="'+anchor+'">'+fmt(val)+'</text>'+
+         '<text x="'+x+'" y="'+(y+35)+'" fill="#e8f2ff" font-size="13" text-anchor="'+anchor+'">'+chg(val,pv)+' this decade</text>';
+}
+function render(){
+  var W=570,py=11;
+  var nA=Math.round(st.A/25),nP=Math.round(st.P/25),nS=Math.round(st.S/25),nC=Math.round(st.C/25),nO=Math.round(st.OG/25);
+  var rA=Math.max(4,Math.ceil(nA/28)),rP=Math.ceil(nP/12),rS=Math.ceil(nS/12),rC=Math.ceil(nC/12),rO=Math.ceil(nO/12);
+  var top=12,gY=top+rA*py+120;
+  var hP=Math.max(130,rP*py+30),hS=Math.max(70,rS*py+30),hC=Math.max(110,rC*py+30),hO=Math.max(70,rO*py+30);
+  var yS=gY+hP,yC=yS+hS,yO=yC+hC,yEnd=yO+hO+34;
+  var o='';
+  o+='<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0a45a8"/><stop offset="1" stop-color="#bfe6ff"/></linearGradient>'+
+     '<linearGradient id="sea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#00b7ff"/><stop offset="1" stop-color="#00161c"/></linearGradient></defs>';
+  o+='<rect x="0" y="0" width="'+W+'" height="'+gY+'" fill="url(#sky)"/>';
+  o+='<rect x="365" y="'+(gY+20)+'" width="'+(W-365)+'" height="'+(yEnd-gY-20)+'" fill="url(#sea)"/>';
+  for(var wv=0;wv<7;wv++){o+='<circle cx="'+(380+wv*27)+'" cy="'+(gY+22)+'" r="13" fill="#00b7ff" stroke="#fff" stroke-width="1.5"/>';}
+  o+='<rect x="0" y="'+gY+'" width="365" height="'+hP+'" fill="#0b4a12"/>';
+  o+='<rect x="0" y="'+yS+'" width="365" height="'+hS+'" fill="#3a2410"/>';
+  o+='<rect x="0" y="'+yC+'" width="365" height="'+(yEnd-yC)+'" fill="#5a3114"/>';
+  // trees
+  var tx=[30,68,128,300,335];
+  tx.forEach(function(x){o+='<polygon points="'+x+','+(gY-48)+' '+(x-15)+','+gY+' '+(x+15)+','+gY+'" fill="#0d6b25"/><rect x="'+(x-2)+'" y="'+(gY-4)+'" width="4" height="6" fill="#3a2410"/>';});
+  // chimney
+  var cx=205;
+  o+='<polygon points="'+(cx-10)+','+(gY-80)+' '+(cx+10)+','+(gY-80)+' '+(cx+22)+','+(gY+60)+' '+(cx-22)+','+(gY+60)+'" fill="#161616"/>';
+  var sm=Math.max(0,Math.min(1.8,(st.rc+st.ro)/9));
+  if(sm>0.02){
+    o+='<circle cx="'+(cx-8)+'" cy="'+(gY-104)+'" r="'+(12*sm+4)+'" fill="#3d3d3d" opacity=".9"/>';
+    o+='<circle cx="'+(cx+22)+'" cy="'+(gY-112)+'" r="'+(16*sm+4)+'" fill="#d6d6d6" opacity=".9"/>';
+  }
+  // blocks
+  o+=blocks(nA,28,18,top);
+  o+=blocks(nP,12,30,gY+16);
+  o+=blocks(nS,12,30,yS+14);
+  o+=blocks(nC,12,30,yC+14);
+  o+=blocks(nO,12,30,yO+14);
+  // labels
+  var ppm=Math.round(st.A/K.perPpm);
+  o+='<text x="'+(W-14)+'" y="'+(top+rA*py+30)+'" fill="#fff" font-size="14" text-anchor="end">Atmosphere</text>'+
+     '<text x="'+(W-14)+'" y="'+(top+rA*py+48)+'" fill="#fff" font-size="14" font-weight="700" text-anchor="end">'+fmt(st.A)+'</text>'+
+     '<text x="'+(W-14)+'" y="'+(top+rA*py+65)+'" fill="#fff" font-size="13" text-anchor="end">'+chg(st.A,prev.A)+' this decade</text>'+
+     '<text x="'+(W-14)+'" y="'+(top+rA*py+84)+'" fill="#fff" font-size="13" text-anchor="end">'+ppm+' ppm CO\u2082</text>';
+  o+=label(352,gY+hP*0.45,'Terrestrial plants',st.P,prev.P,'end');
+  o+=label(352,yS+hS*0.2,'Soil',st.S,prev.S,'end');
+  o+=label(352,yC+hC*0.3,'Coal',st.C,prev.C,'end');
+  o+=label(352,yO+hO*0.1,'Oil and gas',st.OG,prev.OG,'end');
+  o+=label(W-14,gY+70,'Ocean surface',st.O,prev.O,'end');
+  o+=label(W-14,gY+170,'Deep ocean',st.D,prev.D,'end');
+  o+='<rect x="36" y="'+(yEnd-24)+'" width="16" height="8" rx="1" fill="#9a9a9a" stroke="#333"/><text x="58" y="'+(yEnd-16)+'" fill="#fff" font-size="13">= 25 GT carbon</text>';
+  var g=$('gfx');
+  g.setAttribute('viewBox','0 0 '+W+' '+yEnd);
+  g.innerHTML=o;
+  $('year').textContent=st.year;
+  $('run').disabled=st.year>=K.maxYear;
+  var tb=document.querySelector('#tbl tbody'),h='';
+  hist.forEach(function(r){
+    h+='<tr><td>'+r.year+'</td><td>'+fmt(r.A)+'</td><td>'+fmt(r.O)+'</td><td>'+fmt(r.D)+'</td><td>'+fmt(r.OG)+'</td><td>'+fmt(r.C)+'</td><td>'+fmt(r.S)+'</td><td>'+fmt(r.P)+'</td></tr>';
+  });
+  tb.innerHTML=h;
+  $('sr').textContent='Year '+st.year+'. Atmosphere '+fmt(st.A)+', terrestrial plants '+fmt(st.P)+', soil '+fmt(st.S)+', coal '+fmt(st.C)+', oil and gas '+fmt(st.OG)+', ocean surface '+fmt(st.O)+', deep ocean '+fmt(st.D)+' gigatonnes of carbon.';
+}
+
+function bind(rid,nid,zid,setter){
+  var r=$(rid),n=$(nid);
+  function put(v){
+    v=Math.max(-4,Math.min(4,v));if(isNaN(v))v=0;
+    r.value=v;n.value=v;setter(v);
+  }
+  r.addEventListener('input',function(){put(parseFloat(r.value));});
+  n.addEventListener('change',function(){put(parseFloat(n.value));});
+  $(zid).addEventListener('click',function(){put(0);});
+}
+bind('r1','n1','z1',function(v){fchg=v;});
+bind('r2','n2','z2',function(v){defor=v;});
+$('run').addEventListener('click',runDecade);
+$('reset').addEventListener('click',function(){
+  fchg=2;defor=1;
+  $('r1').value=2;$('n1').value=2;$('r2').value=1;$('n2').value=1;
+  fresh();render();
+});
+fresh();render();
+})();
+</script>
+</body>
+</html>
